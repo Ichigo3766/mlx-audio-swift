@@ -22,7 +22,7 @@ struct STTView: View {
             // Transcription result area
             ScrollViewReader { proxy in
                 ScrollView {
-                    if viewModel.transcriptionText.isEmpty && !viewModel.isGenerating && !viewModel.isRecording {
+                    if hasNoContent && !viewModel.isGenerating && !viewModel.isRecording {
                         VStack(spacing: 12) {
                             Spacer(minLength: 80)
                             Image(systemName: "waveform.badge.mic")
@@ -35,11 +35,27 @@ struct STTView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        Text(viewModel.transcriptionText)
-                            .font(bodyFont)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
+                        VStack(alignment: .leading, spacing: 0) {
+                            // Speaker legend
+                            if viewModel.isDiarizationEnabled && !viewModel.activeSpeakers.isEmpty {
+                                SpeakerLegend(activeSpeakers: viewModel.activeSpeakers)
+                                    .padding(.bottom, 8)
+                            }
+
+                            // Transcription text
+                            if viewModel.isDiarizationEnabled && !viewModel.diarizedSegments.isEmpty {
+                                DiarizedTextView(
+                                    segments: viewModel.diarizedSegments,
+                                    font: bodyFont
+                                )
+                            } else {
+                                Text(viewModel.transcriptionText)
+                                    .font(bodyFont)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        .padding()
 
                         Color.clear
                             .frame(height: 1)
@@ -47,6 +63,11 @@ struct STTView: View {
                     }
                 }
                 .onChange(of: viewModel.transcriptionText) {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+                .onChange(of: viewModel.diarizedSegments.count) {
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
@@ -115,6 +136,23 @@ struct STTView: View {
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
+                }
+
+                // Diarization status
+                if viewModel.isDiarizationEnabled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.2.fill")
+                            .font(.caption2)
+                        Text(viewModel.isDiarizationModelLoaded ? "Speaker diarization active" : "Loading diarization model...")
+                            .font(.caption2)
+                        if !viewModel.isDiarizationModelLoaded {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                        }
+                    }
+                    .foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
                 }
             }
             .padding(.bottom, 4)
@@ -339,6 +377,10 @@ struct STTView: View {
         .task {
             await viewModel.loadModel()
         }
+    }
+
+    private var hasNoContent: Bool {
+        viewModel.transcriptionText.isEmpty && viewModel.diarizedSegments.isEmpty
     }
 
     private var canTranscribe: Bool {

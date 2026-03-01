@@ -237,6 +237,90 @@ struct STTSettingsView: View {
             }
             .padding(.bottom, sectionSpacing)
 
+            // Speaker Diarization Section
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Speaker Diarization")
+                    .font(labelFont)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Enable Diarization", isOn: $viewModel.isDiarizationEnabled)
+                    .font(textFont)
+                    .padding(.top, 4)
+                    .onChange(of: viewModel.isDiarizationEnabled) { _, enabled in
+                        if enabled && !viewModel.isDiarizationModelLoaded {
+                            Task { await viewModel.loadDiarizationModel() }
+                        }
+                    }
+
+                if viewModel.isDiarizationEnabled && !viewModel.isDiarizationModelLoaded {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Downloading diarization model...")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+
+                if viewModel.isDiarizationEnabled {
+                    HStack {
+                        Text("Speaker Threshold")
+                            .font(textFont)
+                        Spacer()
+                        Text(String(format: "%.2f", viewModel.diarizationThreshold))
+                            .font(textFont)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+
+                    #if os(iOS)
+                    CompactSlider(
+                        value: Binding(
+                            get: { Double(viewModel.diarizationThreshold) },
+                            set: { viewModel.diarizationThreshold = Float($0) }
+                        ),
+                        range: 0.1...0.9,
+                        step: 0.05
+                    )
+                    #else
+                    Slider(
+                        value: Binding(
+                            get: { Double(viewModel.diarizationThreshold) },
+                            set: { viewModel.diarizationThreshold = Float($0) }
+                        ),
+                        in: 0.1...0.9,
+                        step: 0.05
+                    )
+                    .tint(.blue)
+                    #endif
+
+                    Text("Higher = fewer false speaker detections, lower = more sensitive")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+
+                    // Speaker color legend
+                    HStack(spacing: 12) {
+                        ForEach(0..<4, id: \.self) { i in
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(SpeakerColors.color(for: i))
+                                    .frame(width: 8, height: 8)
+                                Text(SpeakerColors.label(for: i))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+
+                    Text("Supports up to 4 speakers")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.bottom, sectionSpacing)
+
             // Language Section
             VStack(alignment: .leading, spacing: 2) {
                 Text("Language")
@@ -265,6 +349,8 @@ struct STTSettingsView: View {
                 viewModel.language = "English"
                 viewModel.chunkDuration = 30.0
                 viewModel.streamingDelayMs = 480
+                viewModel.isDiarizationEnabled = false
+                viewModel.diarizationThreshold = 0.5
             }) {
                 Text("Reset to Defaults")
                     .font(textFont)
