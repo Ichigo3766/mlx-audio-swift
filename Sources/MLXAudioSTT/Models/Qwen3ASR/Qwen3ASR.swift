@@ -1192,7 +1192,8 @@ public class Qwen3ASRModel: Module {
                     var totalPromptTokens = 0
                     var totalGenerationTokens = 0
                     var remainingTokens = maxTokens
-                    var allGeneratedTokens: [Int] = []
+                    var allChunkTexts: [String] = []
+                    var chunkIndex = 0
 
                     for (chunkAudio, _) in chunks {
                         if remainingTokens <= 0 { break }
@@ -1226,6 +1227,10 @@ public class Qwen3ASRModel: Module {
                         eval(logits)
 
                         var chunkTokens: [Int] = []
+                        // Track previously decoded text for this chunk so we can emit
+                        // the incremental difference (avoids duplicate/missing characters
+                        // from per-token decode artifacts).
+                        var previousChunkText = ""
 
                         for _ in 0..<remainingTokens {
                             try Task.checkCancellation()
@@ -1241,18 +1246,39 @@ public class Qwen3ASRModel: Module {
                             }
 
                             chunkTokens.append(nextToken)
-                            allGeneratedTokens.append(nextToken)
 
-                            let tokenText = tokenizer.decode(tokens: [nextToken])
-                            continuation.yield(.token(tokenText))
+                            // Decode all chunk tokens together for proper BPE context,
+                            // then emit only the new text since the last decode.
+                            let fullChunkText = tokenizer.decode(tokens: chunkTokens)
+                            let newText = String(fullChunkText.dropFirst(previousChunkText.count))
+                            previousChunkText = fullChunkText
+                            if !newText.isEmpty {
+                                continuation.yield(.token(newText))
+                            }
 
                             let nextTokenArray = MLXArray([Int32(nextToken)]).expandedDimensions(axis: 0)
                             logits = model.callAsFunction(inputIds: nextTokenArray, cache: cache)
                             eval(logits)
                         }
 
+                        // Store this chunk's decoded text for proper final result assembly
+                        let finalChunkText = tokenizer.decode(tokens: chunkTokens)
+                        if !finalChunkText.isEmpty {
+                            allChunkTexts.append(finalChunkText)
+                        }
+
+                        // Emit a space separator between chunks so text from
+                        // consecutive chunks doesn't get concatenated without whitespace
+                        // (e.g., "was.Very" → "was. Very").
+                        if !chunkTokens.isEmpty && chunkIndex < chunks.count - 1 {
+                            if !finalChunkText.isEmpty && !finalChunkText.hasSuffix(" ") && !finalChunkText.hasSuffix("\n") {
+                                continuation.yield(.token(" "))
+                            }
+                        }
+
                         totalGenerationTokens += chunkTokens.count
                         remainingTokens -= chunkTokens.count
+                        chunkIndex += 1
 
                         Memory.clearCache()
                     }
@@ -1273,8 +1299,9 @@ public class Qwen3ASRModel: Module {
                     )
                     continuation.yield(.info(info))
 
-                    // Emit final result
-                    let text = tokenizer.decode(tokens: allGeneratedTokens)
+                    // Emit final result — join per-chunk decoded texts with spaces
+                    // (same as non-streaming generate) for correct chunk boundaries.
+                    let text = allChunkTexts.joined(separator: " ")
                     let output = STTOutput(
                         text: text.trimmingCharacters(in: .whitespacesAndNewlines),
                         promptTokens: totalPromptTokens,
